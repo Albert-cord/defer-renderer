@@ -1,0 +1,6 @@
+export { DeferRenderPublicContext } from './src/context/defer-render'
+export { DeferRenderProvider } from './src/provider'
+export { WithDeferRender } from './src'
+export { useIsAllTaskDone } from './src/hooks'
+export type { DeferRenderProps } from './src/provider'
+export type { WithDeferRenderProps } from './src'

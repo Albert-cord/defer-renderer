@@ -1,0 +1,14 @@
+{
+  "workbench.colorCustomizations": {
+    "editor.lineHighlightBackground": "#1073cf2d",
+    "editor.lineHighlightBorder": "#9fced11f",
+    "activityBar.background": "#610317",
+    "titleBar.activeBackground": "#880520",
+    "titleBar.activeForeground": "#FFFBFC"
+  },
+  "prettier.enable": true,
+  "editor.formatOnSave": false,
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": true
+  }
+}
