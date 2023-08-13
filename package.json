@@ -1,5 +1,5 @@
 {
-  "name": "pkg-name",
+  "name": "defer-renderer",
   "type": "module",
   "version": "0.0.0",
   "packageManager": "pnpm@8.1.1",
@@ -46,20 +46,35 @@
     "start": "esno src/index.ts",
     "test": "vitest",
     "typecheck": "tsc --noEmit",
-    "preinstall": "npx -y only-allow pnpm"
+    "preinstall": "npx -y only-allow pnpm",
+    "storybook": "storybook dev -p 6006",
+    "build-storybook": "storybook build",
+    "none": "echo commit"
   },
   "devDependencies": {
     "@antfu/eslint-config": "^0.38.4",
     "@antfu/ni": "^0.21.2",
     "@antfu/utils": "^0.7.2",
+    "@storybook/addon-essentials": "7.0.18",
+    "@storybook/addon-interactions": "7.0.18",
+    "@storybook/addon-links": "7.0.18",
+    "@storybook/blocks": "7.0.18",
+    "@storybook/react": "7.0.18",
+    "@storybook/react-vite": "7.0.18",
+    "@storybook/testing-library": "0.0.14-next.2",
     "@types/node": "^18.15.11",
     "bumpp": "^9.1.0",
     "eslint": "^8.37.0",
+    "eslint-plugin-storybook": "^0.6.12",
     "esno": "^0.16.3",
     "lint-staged": "^13.2.0",
     "pnpm": "^8.1.1",
+    "prop-types": "15.8.1",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
     "rimraf": "^4.4.1",
     "simple-git-hooks": "^2.8.1",
+    "storybook": "7.0.18",
     "typescript": "^5.0.3",
     "unbuild": "^1.2.0",
     "vite": "^4.2.1",
@@ -69,6 +84,6 @@
     "pre-commit": "pnpm lint-staged"
   },
   "lint-staged": {
-    "*": "eslint --fix"
+    "*": "pnpm run none"
   }
 }

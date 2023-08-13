@@ -11,8 +11,9 @@
  * config: maybe timer, change taskManager callback, getState, etc...
  *
  */
-import { useContext, useEffect, useMemo, useState } from 'react'
-import type { Component, FunctionComponent, PropsWithChildren, ReactElement } from 'react'
+import React, { useContext, useEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties, Component, FunctionComponent, LegacyRef, PropsWithChildren, ReactElement } from 'react'
+import { observe } from 'react-intersection-observer'
 import { DeferRenderContext } from './context/defer-render'
 
 export interface WithDeferRenderProps {
@@ -22,11 +23,11 @@ export interface WithDeferRenderProps {
      string | FunctionComponent | typeof Component
    > | null
   forceRender?: boolean
-  onRender?: (isRender: true) => void
+  onRenderSuccess?: (isRender: true) => void
 }
 
-export function WithDeferRender(props: PropsWithChildren<WithDeferRenderProps>) {
-  const { children, priority, fallback, forceRender: forceIsRender, onRender } = props
+export function InternalWithDeferRender(props: PropsWithChildren<WithDeferRenderProps>) {
+  const { children, priority, fallback, forceRender: forceIsRender, onRenderSuccess } = props
 
   const _children = useMemo(() => {
     return children
@@ -36,7 +37,7 @@ export function WithDeferRender(props: PropsWithChildren<WithDeferRenderProps>) 
   const isRender = forceIsRender || _isRender
 
   useEffect(() => {
-    !isRender && setIsRender(true)
+    !_isRender && isRender && setIsRender(true)
   }, [isRender])
 
   const machine = useContext(DeferRenderContext)
@@ -46,7 +47,7 @@ export function WithDeferRender(props: PropsWithChildren<WithDeferRenderProps>) 
       return
     const unregister = machine?.register(() => {
       setIsRender(true)
-      onRender?.(true)
+      onRenderSuccess?.(true)
       //  TODO: 再考虑一种场景，例如一个列表，
       // 下滑时，下面的优先级高（比较晚push，还要看heapify的实现），上面的优先级低（）
       // 导致下面的先出来（正确的），但是渲染不按照瀑布流来，也很难受
@@ -57,13 +58,42 @@ export function WithDeferRender(props: PropsWithChildren<WithDeferRenderProps>) 
     }
   }, [priority, isRender])
 
-  return isRender ? _children : fallback ?? null
+  return isRender ? <>{_children}</> : fallback ?? null
+}
+
+const intersectionContainerStyle: CSSProperties = {
+  minWidth: '4px',
+  minHeight: '4px',
 }
 
 //  TODO: 再写一个intersectionObserver 的hooks and wrapper component
 // 1. 直接用react-use的，然后其他渲染库版本再写
 // 2. 用 react-intersection-observer 轻量，再另外的可以参考其test-utils.ts写测试工具暴露出去
-// 2的竞品：https://www.npmjs.com/package/react-in-viewport
-// https://www.npmjs.com/package/react-intersection-observer-hook
-// 感觉用1，然后参考其他方式
-// 因为用非1，其他渲染库还要继续选，不靠谱。。。
+export function WithDeferRender(props: PropsWithChildren<WithDeferRenderProps>) {
+  const { children, ...otherProps } = props
+  const [isInView, setIsInView] = useState(false)
+  const ref: LegacyRef<HTMLDivElement> = useRef(null!)
+  useEffect(() => {
+    if (ref.current && !isInView) {
+      const unobserve = observe(ref.current, () => {
+        setIsInView(true)
+        unobserve()
+      }, {
+        threshold: [0.01],
+      })
+      return unobserve
+    }
+  }, [isInView])
+
+  const _children = useMemo(() => {
+    return children
+  }, [children])
+
+  return <div style={intersectionContainerStyle} ref={ref}>
+    <InternalWithDeferRender
+    onRenderSuccess={() => {
+      setIsInView(true)
+    }}
+    forceRender={isInView} {...otherProps} >{_children}</InternalWithDeferRender>
+  </div>
+}

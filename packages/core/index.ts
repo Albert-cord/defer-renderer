@@ -199,6 +199,10 @@ export default class TaskMachine<T = number> {
       this.worker.beginWork()
     }
   }
+
+  changeBatchSize(batchSize?: number) {
+    this.worker.changeBatchSize(batchSize)
+  }
 }
 
 export interface TimerInterface<T> {
@@ -221,10 +225,9 @@ class Timer implements TimerInterface<number> {
 
 class TaskWorker<T> extends EventEmit {
   workStatus: WorkStatus
-  taskMap: Map<string, Task>
-
+  taskMap: Map<number, Task>
+  actionKeyMap: Map<Task['action'], number>
   queue: MinQueue
-  tempTasks: [string, Task][]
   increaseId: number
   jobTimerId: null | T
   nextTimerId: number | null
@@ -237,14 +240,24 @@ class TaskWorker<T> extends EventEmit {
     super()
     this.workStatus = WorkStatus.Idle
     this.taskMap = new Map()
+    this.actionKeyMap = new Map()
     this.queue = new MinQueue(Infinity)
-    // 被取消之后临时存储的tasks
-    this.tempTasks = []
     this.increaseId = 0
     this.jobTimerId = null
     this.nextTimerId = null
     this.batchSize = config?.batchSize ?? 1
     this.timer = timer
+  }
+
+  changeBatchSize(batchSize?: number) {
+    if (batchSize === undefined || batchSize < 0) {
+      // TODO: assert and throw error
+    }
+    if (batchSize && batchSize !== this.batchSize) {
+      this.batchSize = batchSize
+      return true
+    }
+    return false
   }
 
   next() {
@@ -264,63 +277,47 @@ class TaskWorker<T> extends EventEmit {
     return task
   }
 
+  beginWork() {
+    if (this.queue.capacity === 0) {
+      // TODO: log
+    }
+    this.beginWorkImpl()
+  }
+
+  // effect, so just only work in commit work
+  private getUndoneTask() {
+    let needToDoneTaskCount: number = this.batchSize
+    const undoneTasks: [number, Task][] = []
+    while (needToDoneTaskCount) {
+      if (this.queue.capacity === 0)
+        break
+
+      const id = this.queue.pop() as number
+      const task = this.taskMap.get(id)
+      if (task) {
+        undoneTasks.push([id, task])
+        needToDoneTaskCount--
+      }
+    }
+    return undoneTasks
+  }
+
   // 如果每个action是一个task，那么其实每次都是一个timer一个action，只是每次执行多个timer
   // 那样不是我期望的，因为每次action都可能是一个阻塞的任务
   // 还是一个timer多个task也就是多个action，timer = job
   // 那某个task想取消应该怎么办？
   // 去除action，但是这个job还会执行
   // 如果暂停机器那就是暂停这个
-  beginWork() {
+  beginWorkImpl() {
     if (this.workStatus === WorkStatus.Idle) {
       this.workStatus = WorkStatus.Working
       this.fire('workStatusChange', this.workStatus)
-      // 还需要的id数量，满足unregister的亏空
-      let unregisterLength = 0
-      const currentTasks = this.tempTasks.length
-        ? this.tempTasks
-        : Array(this.batchSize).map(() => {
-          const id = this.queue.pop()
-          if (!id?.toString()) {
-            if (this.queue.capacity !== 0)
-              unregisterLength++
-
-            return void 0
-          }
-          return [id?.toString(), id?.toString() && this.taskMap.get(id?.toString())]
-        }).filter(Boolean) as Array<[string, Task]>
-      while (unregisterLength) {
-        unregisterLength--
-        const id = this.queue.pop()
-        if (!id?.toString()) {
-          if (this.queue.capacity !== 0)
-            unregisterLength++
-        }
-        else {
-          if (!!id?.toString() && this.taskMap.has(id?.toString()))
-            currentTasks.push([id?.toString(), this.taskMap.get(id?.toString())!])
-        }
-      }
-
-      this.tempTasks = currentTasks
-      if (!currentTasks.length)
-        return
       // 如果这几个work有在
       // eslint-disable-next-line @typescript-eslint/no-misused-promises
       const timerResult = this.timer.timer(async () => {
+        const undoneTasks = this.getUndoneTask()
         // 其实可以只有getTaskId，然后再自己根据TaskId去拿task引用，但是为了一种优先执行可能性，存引用进去比较合适
-        for (const [taskId, task] of currentTasks) {
-          if (typeof taskId !== 'number' || !task)
-            return
-          const result = task.action()
-          if (['[object Promise]', '[object Generator]'].includes(Object.prototype.toString.call(task)))
-            await result
-
-          // 清除可能存在的引用，出于调试的需要，需要如何存储一份? weakMap? 我觉得应该不会存在调试这里的可能
-          task.action = () => void 0
-          task.done = true
-          this.fire('doneTask', taskId)
-        }
-        this.tempTasks.length = 0
+        await this.commitWork(undoneTasks)
         this.workStatus = WorkStatus.Idle
         this.fire('workStatusChange', this.workStatus)
         this.next()
@@ -329,8 +326,21 @@ class TaskWorker<T> extends EventEmit {
     }
   }
 
-  // async commitWork (task: Task) {
-  // }
+  private async commitWork(undoneTasks: [number, Task][]) {
+    // 其实可以只有getTaskId，然后再自己根据TaskId去拿task引用，但是为了一种优先执行可能性，存引用进去比较合适
+    for (const [taskId, task] of undoneTasks) {
+      // if task do an effect worker task, that would not be like happening, for worker already has its handle
+      const result = task.action()
+      // TODO: Promise Like and etc...
+      if (['[object Promise]', '[object Generator]'].includes(Object.prototype.toString.call(task)))
+        await result
+
+      // 清除可能存在的引用，出于调试的需要，需要如何存储一份? weakMap? 我觉得应该不会存在调试这里的可能
+      task.action = () => void 0
+      task.done = true
+      this.fire('doneTask', taskId)
+    }
+  }
 
   pauseWork() {
     this.workStatus = WorkStatus.Idle
@@ -340,13 +350,10 @@ class TaskWorker<T> extends EventEmit {
   }
 
   stopWork() {
-    this.workStatus = WorkStatus.Idle
-    this.fire('workStatusChange', this.workStatus)
-    this.jobTimerId && this.timer.cleanup(this.jobTimerId)
-    this.nextTimerId && window.clearTimeout(this.nextTimerId)
-    this.tempTasks = []
+    this.pauseWork()
     this.queue.clear()
     this.taskMap.clear()
+    this.actionKeyMap.clear()
     this.listeners = {}
   }
 
@@ -355,7 +362,9 @@ class TaskWorker<T> extends EventEmit {
     // TODO:
     // priority 是升序还是降序？
     this.queue.push(task.id, task.priority)
-    this.taskMap.set(task.id.toString(), task)
+    const taskId = task.id
+    this.taskMap.set(taskId, task)
+    this.actionKeyMap.set(action, taskId)
     this.fire('registerTask', task.id)
     return () => this.unregister(action)
   }
@@ -363,26 +372,24 @@ class TaskWorker<T> extends EventEmit {
   // 考虑一种场景，如果在
   // 感觉可以去掉removeIfInTaskQueue，感觉没这个场景，如果可见就直接unregister这个task了
   unregister(action: Task['action']) {
-    for (const key of this.taskMap.keys()) {
-      if (action === this.taskMap.get(key)?.action) {
-        if (key !== void 0) {
-          const task = this.taskMap.get(key)
-          // 其实还有一种就是beginWork不拿这个task引用，例如拿个getTask
-          // 但是没必要，因为task已经在队列了，到了执行它的时候了，不能篡改queue
-          if (task) {
-            // 但是调高优先级，把当前的干掉，放到下个队列里也是很扯淡
-            // 篡改，修改可能存在Job里的task
-            // 调高优先级不一定就是马上执行，如果是马上执行，请自行调用task
-            // 所以还是交给taskWork调度
-            // if(removeIfInTaskQueue) {
-            //     task.action = () => void 0;
-            // }
-            task.action = () => void 0
-            this.taskMap.delete(key)
-            this.fire('unregisterTask', task.id)
-          }
-        }
+    if (this.actionKeyMap.has(action)) {
+      const key = this.actionKeyMap.get(action)
+      if (key === void 0)
         return
+      const task = this.taskMap.get(key)
+      // 其实还有一种就是beginWork不拿这个task引用，例如拿个getTask
+      // 但是没必要，因为task已经在队列了，到了执行它的时候了，不能篡改queue
+      if (task) {
+        // 但是调高优先级，把当前的干掉，放到下个队列里也是很扯淡
+        // 篡改，修改可能存在Job里的task
+        // 调高优先级不一定就是马上执行，如果是马上执行，请自行调用task
+        // 所以还是交给taskWork调度
+        // if(removeIfInTaskQueue) {
+        //     task.action = () => void 0;
+        // }
+        this.taskMap.delete(key)
+        this.actionKeyMap.delete(action)
+        this.fire('unregisterTask', task.id)
       }
     }
   }

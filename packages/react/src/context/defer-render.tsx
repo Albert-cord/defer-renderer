@@ -1,6 +1,6 @@
 import { createContext } from 'react'
-import type TaskMachine from '@defer-render/core'
-import type { TaskMachinePublic } from '@defer-render/core'
+import type TaskMachine from '@defer-renderer/core'
+import type { TaskMachinePublic } from '@defer-renderer/core'
 
 export interface DeferRenderContextValue {
   isAllDone: boolean

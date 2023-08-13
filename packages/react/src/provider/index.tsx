@@ -17,8 +17,8 @@ import React, { useContext, useEffect, useMemo, useState } from 'react'
 //  考虑替换
 import { unstable_batchedUpdates } from 'react-dom'
 import type { PropsWithChildren } from 'react'
-import TaskMachine from '@defer-render/core'
-import type { TaskMachinePublic, TimerInterface } from '@defer-render/core'
+import TaskMachine from '@defer-renderer/core'
+import type { TaskMachinePublic, TimerInterface } from '@defer-renderer/core'
 import { DeferRenderContext, DeferRenderPublicContext, InternalDeferRenderContext } from '../context/defer-render'
 import type { DeferRenderContextValue } from '../context/defer-render'
 
@@ -74,13 +74,15 @@ export function InternalDeferRenderProvider(props: PropsWithChildren<unknown>) {
     }
   }, [])
 
+  // [].every(id => [].includes(id)) true
+  // 上面的情况，所以用<=
+  const isAllDone = useMemo(() => allTasks.length <= doneTasks.length && allTasks.every(id => doneTasks.includes(id)), [allTasks, doneTasks])
+
   const context: DeferRenderContextValue = useMemo(() => {
     return {
-      // [].every(id => [].includes(id)) true
-      // 上面的情况，所以用<=
-      isAllDone: allTasks.length <= doneTasks.length && allTasks.every(id => doneTasks.includes(id)),
+      isAllDone,
     }
-  }, [allTasks, doneTasks])
+  }, [isAllDone])
 
   return (
          <InternalDeferRenderContext.Provider value={context}>
@@ -94,6 +96,7 @@ export function InternalDeferRenderProvider(props: PropsWithChildren<unknown>) {
 export interface DeferRenderProps<T> {
   leading?: boolean
   timer?: TimerInterface<T>
+  batchSize?: number
 }
 
 const internalTimer: TimerInterface<number> = {
@@ -111,11 +114,16 @@ const internalTimer: TimerInterface<number> = {
 }
 
 export function DeferRenderProvider<T = number>(props: PropsWithChildren<DeferRenderProps<T>>) {
-  const { timer, children, leading = true } = props
+  const { timer, children, leading = true, batchSize = 1 } = props
 
   const context = useMemo(() => {
-    return new TaskMachine<T>(timer ?? internalTimer as unknown as TimerInterface<T>)
+    const machine = new TaskMachine<T>(timer ?? internalTimer as unknown as TimerInterface<T>, batchSize)
+    return machine
   }, [])
+
+  useEffect(() => {
+    context.changeBatchSize()
+  }, [batchSize])
 
   const publicContext = useMemo(() => {
     return {
